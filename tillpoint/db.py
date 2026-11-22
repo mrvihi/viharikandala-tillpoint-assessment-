@@ -1,3 +1,4 @@
+
 """SQLite storage. All money is integer cents; all timestamps are UTC ISO-8601 strings."""
 import sqlite3
 from datetime import datetime, timezone
@@ -40,7 +41,9 @@ CREATE TABLE IF NOT EXISTS payments (
     order_id INTEGER NOT NULL REFERENCES orders(id),
     event_id TEXT NOT NULL,
     amount_cents INTEGER NOT NULL,
-    received_at TEXT NOT NULL
+    received_at TEXT NOT NULL,
+    refund_required INTEGER NOT NULL DEFAULT 0
+        CHECK (refund_required IN (0, 1))
 );
 CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_event_id ON payments(event_id);
@@ -53,6 +56,22 @@ def connect(path=":memory:"):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+
+    # Upgrade databases created before refund_required was introduced.
+    payment_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(payments)")
+    }
+
+    if "refund_required" not in payment_columns:
+        conn.execute(
+            """
+            ALTER TABLE payments
+            ADD COLUMN refund_required INTEGER NOT NULL DEFAULT 0
+            CHECK (refund_required IN (0, 1))
+            """
+        )
+
     return conn
 
 
@@ -65,4 +84,6 @@ def to_iso(dt):
 
 
 def from_iso(text):
-    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )

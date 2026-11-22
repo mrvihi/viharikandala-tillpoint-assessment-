@@ -20,6 +20,9 @@ class OrderDeskTest(unittest.TestCase):
             "INSERT INTO coupons (code, kind, value) VALUES ('TEN', 'percent', 10)"
         )
 
+    def tearDown(self):
+        self.conn.close()
+
     def test_order_totals_with_tax(self):
         order = self.app.orders.create(
             "ana", [("MUG", 2), ("TEE", 1)], region="CA"
@@ -214,6 +217,117 @@ class OrderDeskTest(unittest.TestCase):
         ).fetchone()[0]
 
         self.assertEqual(count, 1)
+
+    def test_second_successful_payment_is_flagged_for_refund(self):
+        order = self.app.orders.create("ana", [("MUG", 1)])
+
+        first_payment = {
+            "id": "evt_first_payment",
+            "type": "payment.succeeded",
+            "order_id": order["id"],
+            "amount_cents": 1200
+        }
+
+        second_payment = {
+            "id": "evt_second_payment",
+            "type": "payment.succeeded",
+            "order_id": order["id"],
+            "amount_cents": 1200
+        }
+
+        self.app.payments.handle_event(first_payment)
+        self.app.payments.handle_event(second_payment)
+
+        self.assertEqual(
+            self.app.payments.paid_cents(order["id"]),
+            1200
+        )
+
+        payments = self.conn.execute(
+            """
+            SELECT event_id, refund_required
+            FROM payments
+            WHERE order_id = ?
+            ORDER BY id
+            """,
+            (order["id"],)
+        ).fetchall()
+
+        self.assertEqual(len(payments), 2)
+        self.assertEqual(payments[0]["refund_required"], 0)
+        self.assertEqual(payments[1]["refund_required"], 1)
+
+        saved_order = self.app.orders.get(order["id"])
+        self.assertEqual(saved_order["status"], "paid")
+
+    def test_partial_payments_combine_to_pay_order(self):
+        order = self.app.orders.create("ana", [("MUG", 1)])
+
+        first_payment = {
+            "id": "evt_partial_1",
+            "type": "payment.succeeded",
+            "order_id": order["id"],
+            "amount_cents": 500
+        }
+
+        second_payment = {
+            "id": "evt_partial_2",
+            "type": "payment.succeeded",
+            "order_id": order["id"],
+            "amount_cents": 700
+        }
+
+        self.assertEqual(
+            self.app.payments.handle_event(first_payment),
+            "pending"
+        )
+
+        self.assertEqual(
+            self.app.payments.handle_event(second_payment),
+            "paid"
+        )
+
+        self.assertEqual(
+            self.app.payments.paid_cents(order["id"]),
+            1200
+        )
+
+        saved_order = self.app.orders.get(order["id"])
+        self.assertEqual(saved_order["status"], "paid")
+
+    def test_payment_exceeding_order_total_is_flagged_for_refund(self):
+        order = self.app.orders.create("ana", [("MUG", 1)])
+
+        payment = {
+            "id": "evt_overpayment",
+            "type": "payment.succeeded",
+            "order_id": order["id"],
+            "amount_cents": 1500
+        }
+
+        self.assertEqual(
+            self.app.payments.handle_event(payment),
+            "pending"
+        )
+
+        self.assertEqual(
+            self.app.payments.paid_cents(order["id"]),
+            0
+        )
+
+        saved_payment = self.conn.execute(
+            """
+            SELECT refund_required
+            FROM payments
+            WHERE event_id = ?
+            """,
+            ("evt_overpayment",)
+        ).fetchone()
+
+        self.assertEqual(saved_payment["refund_required"], 1)
+
+        saved_order = self.app.orders.get(order["id"])
+        self.assertEqual(saved_order["status"], "pending")
 
 
 if __name__ == "__main__":
