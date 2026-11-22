@@ -1,3 +1,4 @@
+
 """Order maths: subtotal, coupon discount, tax, total. Integer cents throughout."""
 
 # Sales tax in basis points (1/100 of a percent) by region.
@@ -17,35 +18,53 @@ def discount_for(coupon, subtotal_cents):
     """Discount in cents for a coupon row (or None) against a subtotal. Never more than the subtotal."""
     if coupon is None:
         return 0
+
     if subtotal_cents < coupon["min_subtotal_cents"]:
-        raise CouponRejected(f"{coupon['code']} needs a subtotal of at least {coupon['min_subtotal_cents']}")
+        raise CouponRejected(
+            f"{coupon['code']} needs a subtotal of at least {coupon['min_subtotal_cents']}"
+        )
+
     if coupon["max_uses"] is not None and coupon["uses"] >= coupon["max_uses"]:
         raise CouponRejected(f"{coupon['code']} has been used up")
+
     if coupon["kind"] == "percent":
         amount = round_half_up(subtotal_cents * coupon["value"], 100)
     else:
         amount = coupon["value"]
+
     return min(amount, subtotal_cents)
 
 
 def tax_for(taxable_cents, region):
+    """Calculate tax on the taxable amount for the selected region."""
     if region not in TAX_BPS:
         raise ValueError(f"unknown region {region!r}")
+
     return round_half_up(taxable_cents * TAX_BPS[region], 10_000)
 
 
 def round_half_up(numerator, denominator):
+    """Round a fraction to the nearest integer, with halves rounded up."""
     return (2 * numerator + denominator) // (2 * denominator)
 
 
 def price_order(lines, region, coupon=None):
     """Return dict(subtotal_cents, discount_cents, tax_cents, total_cents)."""
+
+    # Step 1: Calculate the original subtotal.
     sub = subtotal(lines)
-    tax = tax_for(sub, region)
+
+    # Step 2: Apply the coupon discount.
     discount = discount_for(coupon, sub)
+
+    # Step 3: Calculate tax on the discounted amount.
+    taxable = sub - discount
+    tax = tax_for(taxable, region)
+
+    # Step 4: Calculate the final total.
     return {
         "subtotal_cents": sub,
         "discount_cents": discount,
         "tax_cents": tax,
-        "total_cents": sub - discount + tax,
+        "total_cents": taxable + tax,
     }
