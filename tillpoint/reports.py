@@ -1,3 +1,4 @@
+
 """Sales reports for the shop owner."""
 from datetime import datetime, timedelta, timezone
 
@@ -7,7 +8,10 @@ from . import db
 def day_bounds_utc(day, utc_offset_minutes=0):
     """The UTC instants at which a shop-local calendar day starts and ends. day is 'YYYY-MM-DD'."""
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    start += timedelta(minutes=utc_offset_minutes)
+
+    # Convert local midnight to UTC by subtracting the local UTC offset.
+    start -= timedelta(minutes=utc_offset_minutes)
+
     return db.to_iso(start), db.to_iso(start + timedelta(days=1))
 
 
